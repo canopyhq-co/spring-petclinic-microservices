@@ -1,0 +1,54 @@
+# Canopy deploy example: report a deployment of an existing tag to an environment. Reports nothing else.
+# Secrets: CANOPY_API_KEY, CANOPY_SCAN_TOKEN. Variables also: CANOPY_SCAN_REPO. Variables: CANOPY_ENDPOINT, CANOPY_DEPLOY_HOST_<DEV|QA|UAT|PROD>, CANOPY_DEPLOY_PORT (default 8443), CANOPY_DEPLOY_ARGS.
+name: canopy-deploy
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [dev, qa, uat, prod]
+        required: true
+      tag:
+        description: Existing git tag to deploy
+        required: true
+      status:
+        description: Outcome to report
+        type: choice
+        options: [success, failed]
+        default: success
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CANOPY_API_KEY: ${{ secrets.CANOPY_API_KEY }}
+      CANOPY_ENDPOINT: ${{ vars.CANOPY_ENDPOINT }}
+      DEPLOY_ENV: ${{ inputs.environment }}
+      DEPLOY_TAG: ${{ inputs.tag }}
+      DEPLOY_STATUS: ${{ inputs.status }}
+      HOST_DEV: ${{ vars.CANOPY_DEPLOY_HOST_DEV }}
+      HOST_QA: ${{ vars.CANOPY_DEPLOY_HOST_QA }}
+      HOST_UAT: ${{ vars.CANOPY_DEPLOY_HOST_UAT }}
+      HOST_PROD: ${{ vars.CANOPY_DEPLOY_HOST_PROD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+      - name: Require the endpoint (never fall back to the default)
+        run: test -n "$CANOPY_ENDPOINT" || { echo "CANOPY_ENDPOINT is not set"; exit 1; }
+      - name: Install canopy-scan
+        env:
+          GH_TOKEN: ${{ secrets.CANOPY_SCAN_TOKEN }}
+          CANOPY_SCAN_REPO: ${{ vars.CANOPY_SCAN_REPO }}
+        run: |
+          gh release download e2e-latest --repo "$CANOPY_SCAN_REPO" --pattern canopy-scan-linux-amd64 --output canopy-scan
+          chmod +x canopy-scan
+      # Your real deployment goes here.
+      - name: Report the deployment
+        run: |
+          case "$DEPLOY_ENV" in
+            dev) host="$HOST_DEV" ;; qa) host="$HOST_QA" ;; uat) host="$HOST_UAT" ;; prod) host="$HOST_PROD" ;;
+          esac
+          test -n "$host" || { echo "no host configured for $DEPLOY_ENV"; exit 1; }
+          ./canopy-scan deploy --target . ${{ vars.CANOPY_DEPLOY_ARGS }} --host "$host" --port "${{ vars.CANOPY_DEPLOY_PORT || '8443' }}" \
+            --release-version "$DEPLOY_TAG" --status "$DEPLOY_STATUS" --push --endpoint "$CANOPY_ENDPOINT"

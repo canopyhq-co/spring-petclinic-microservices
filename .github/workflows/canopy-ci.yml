@@ -1,0 +1,46 @@
+# Canopy CI example: scan the build, tag it, report the release and its deploy to dev.
+# Inputs by name only. Secrets: CANOPY_API_KEY, CANOPY_SCAN_TOKEN (read access to the release below).
+# Variables: CANOPY_ENDPOINT, CANOPY_DEPLOY_HOST_DEV, CANOPY_DEPLOY_PORT (default 8443), CANOPY_DEPLOY_ARGS (e.g. --all-components for several components),
+# CANOPY_SCAN_REPO (owner/repo holding the canopy-scan-linux-amd64 asset of its e2e-latest prerelease, until a public release exists).
+name: canopy-ci
+on: push
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      CANOPY_API_KEY: ${{ secrets.CANOPY_API_KEY }}
+      CANOPY_ENDPOINT: ${{ vars.CANOPY_ENDPOINT }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require the endpoint (never fall back to the default)
+        run: test -n "$CANOPY_ENDPOINT" || { echo "CANOPY_ENDPOINT is not set"; exit 1; }
+      - name: Install canopy-scan
+        env:
+          GH_TOKEN: ${{ secrets.CANOPY_SCAN_TOKEN }}
+          CANOPY_SCAN_REPO: ${{ vars.CANOPY_SCAN_REPO }}
+        run: |
+          gh release download e2e-latest --repo "$CANOPY_SCAN_REPO" --pattern canopy-scan-linux-amd64 --output canopy-scan
+          chmod +x canopy-scan
+      # Your real build goes here. Nothing is built in the test fleet.
+      - name: Tag the build
+        id: tag
+        run: |
+          tag="e2e-${GITHUB_RUN_NUMBER}"
+          # A re-run of the same run number would collide with the tag the first attempt made.
+          [ "${GITHUB_RUN_ATTEMPT}" = "1" ] || tag="${tag}.${GITHUB_RUN_ATTEMPT}"
+          git tag "$tag"
+          git push origin "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Report the build
+        run: ./canopy-scan --target . --release-version "${{ steps.tag.outputs.tag }}" --push --endpoint "$CANOPY_ENDPOINT"
+      - name: Report the deploy to dev
+        if: vars.CANOPY_NEVER_DEPLOY != 'true'
+        run: |
+          ./canopy-scan deploy --target . ${{ vars.CANOPY_DEPLOY_ARGS }} \
+            --host "${{ vars.CANOPY_DEPLOY_HOST_DEV }}" --port "${{ vars.CANOPY_DEPLOY_PORT || '8443' }}" \
+            --release-version "${{ steps.tag.outputs.tag }}" --status success \
+            --push --endpoint "$CANOPY_ENDPOINT"
