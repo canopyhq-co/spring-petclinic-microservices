@@ -1,0 +1,11 @@
+version: 1
+product: clinic-platform
+owners:
+  - {name: E2E Owner, email: e2e-owner@example.com}
+components:
+  - path: spring-petclinic-config-server
+    deployable: false
+  - path: docker/grafana
+    name: grafana-config
+    type: config
+    product: observability
